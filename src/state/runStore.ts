@@ -1,0 +1,405 @@
+import { createPokemonInstance } from '../api/mappers'
+import { prefetchTypes } from '../api/pokeapi'
+import { initBattle } from '../game/battle'
+import { battleGoldReward } from '../game/formulas'
+import {
+  addToInventory,
+  applyBattleBuffs,
+  createBattleBuff,
+  emptyInventory,
+  getItemPrice,
+  getShopItem,
+  healPokemon,
+  normalizeInventory,
+  pickPokeballSpecies,
+  pokeballSpeciesRoll,
+  removeFromInventory,
+  revivePokemon,
+  starterLevel,
+} from '../game/items'
+import { applyCatchToParty } from '../game/catch'
+import { generateMap, pickCatchLevel, pickCatchSpecies } from '../game/map'
+import { createSeed } from '../game/rng'
+import { clearRun, loadRun, saveRun } from './persistence'
+import type {
+  ItemId,
+  MapNode,
+  PokemonInstance,
+  PostBattleResult,
+  RunState,
+} from '../models/types'
+
+export type RunAction =
+  | { type: 'INIT' }
+  | { type: 'NEW_RUN' }
+  | { type: 'CONTINUE_RUN' }
+  | { type: 'SELECT_STARTER'; speciesId: number }
+  | { type: 'SELECT_NODE'; nodeId: string }
+  | { type: 'OPEN_MARKET' }
+  | { type: 'CLOSE_MARKET' }
+  | { type: 'BUY_ITEM'; itemId: ItemId }
+  | { type: 'USE_ITEM'; itemId: ItemId; pokemonUid?: string }
+  | { type: 'BATTLE_UPDATED'; battle: RunState['battle'] }
+  | { type: 'BATTLE_END'; party: PokemonInstance[]; postBattle: Omit<PostBattleResult, 'goldGained'> }
+  | { type: 'RETURN_TO_MAP' }
+  | { type: 'CATCH_POKEMON'; accept: boolean; replaceUid?: string }
+  | { type: 'GAME_OVER' }
+  | { type: 'VICTORY' }
+  | { type: 'RESET' }
+
+const initialState: RunState = {
+  screen: 'home',
+  party: [],
+  map: [],
+  currentNodeId: null,
+  battleNodeId: null,
+  seed: 0,
+  badges: 0,
+  gold: 0,
+  inventory: emptyInventory(),
+  pendingBattleBuffs: [],
+  battle: null,
+  postBattle: null,
+  catchOffer: null,
+  catchFromItem: false,
+  itemRollCounter: 0,
+  pokeballsBought: 0,
+}
+
+export function getInitialRunState(): RunState {
+  return { ...initialState, inventory: emptyInventory() }
+}
+
+function normalizeRunState(state: RunState): RunState {
+  return {
+    ...state,
+    gold: state.gold ?? 0,
+    inventory: normalizeInventory(state.inventory),
+    pendingBattleBuffs: state.pendingBattleBuffs ?? [],
+    catchFromItem: state.catchFromItem ?? false,
+    itemRollCounter: state.itemRollCounter ?? 0,
+    pokeballsBought: state.pokeballsBought ?? 0,
+  }
+}
+
+async function rollPokeballCatch(state: RunState): Promise<PokemonInstance> {
+  const speciesId = pickPokeballSpecies(state.seed, pokeballSpeciesRoll(state))
+  const level = starterLevel(state.party)
+  return createPokemonInstance(speciesId, level)
+}
+
+export async function handleRunAction(
+  state: RunState,
+  action: RunAction,
+): Promise<RunState> {
+  state = normalizeRunState(state)
+
+  switch (action.type) {
+    case 'INIT':
+      return state
+
+    case 'NEW_RUN':
+      clearRun()
+      await prefetchTypes()
+      return {
+        ...initialState,
+        screen: 'starter',
+        seed: createSeed(),
+        inventory: emptyInventory(),
+      }
+
+    case 'CONTINUE_RUN': {
+      const saved = loadRun()
+      if (saved) return normalizeRunState(saved)
+      return state
+    }
+
+    case 'SELECT_STARTER': {
+      const starter = await createPokemonInstance(action.speciesId, 5)
+      const map = generateMap(state.seed)
+      const next: RunState = {
+        ...state,
+        screen: 'map',
+        party: [starter],
+        map,
+        currentNodeId: null,
+        gold: 0,
+        inventory: emptyInventory(),
+        pendingBattleBuffs: [],
+        pokeballsBought: 0,
+      }
+      saveRun(next)
+      return next
+    }
+
+    case 'OPEN_MARKET': {
+      const next: RunState = { ...state, screen: 'market' }
+      saveRun(next)
+      return next
+    }
+
+    case 'CLOSE_MARKET': {
+      const next: RunState = { ...state, screen: 'map' }
+      saveRun(next)
+      return next
+    }
+
+    case 'BUY_ITEM': {
+      const item = getShopItem(action.itemId)
+
+      if (item.kind === 'pokeball') {
+        const price = getItemPrice('pokeball', state.pokeballsBought)
+        if (state.gold < price) return state
+
+        const wild = await rollPokeballCatch(state)
+        const next: RunState = {
+          ...state,
+          gold: state.gold - price,
+          pokeballsBought: state.pokeballsBought + 1,
+          screen: 'catch',
+          catchOffer: wild,
+          catchFromItem: true,
+          itemRollCounter: state.itemRollCounter + 1,
+        }
+        saveRun(next)
+        return next
+      }
+
+      if (state.gold < item.price) return state
+
+      const next: RunState = {
+        ...state,
+        gold: state.gold - item.price,
+        inventory: addToInventory(state.inventory, action.itemId),
+      }
+      saveRun(next)
+      return next
+    }
+
+    case 'USE_ITEM': {
+      const item = getShopItem(action.itemId)
+
+      if (item.kind === 'pokeball') {
+        const inv = removeFromInventory(state.inventory, action.itemId)
+        if (!inv) return state
+
+        const wild = await rollPokeballCatch(state)
+        const next: RunState = {
+          ...state,
+          inventory: inv,
+          screen: 'catch',
+          catchOffer: wild,
+          catchFromItem: true,
+          itemRollCounter: state.itemRollCounter + 1,
+        }
+        saveRun(next)
+        return next
+      }
+
+      const inv = removeFromInventory(state.inventory, action.itemId)
+      if (!inv) return state
+
+      if (item.kind === 'heal') {
+        if (!action.pokemonUid || !item.healAmount) return state
+        const target = state.party.find((p) => p.uid === action.pokemonUid)
+        if (!target || target.currentHp <= 0 || target.currentHp >= target.maxHp) {
+          return state
+        }
+
+        const next: RunState = {
+          ...state,
+          inventory: inv,
+          party: state.party.map((p) =>
+            p.uid === action.pokemonUid ? healPokemon(p, item.healAmount!) : p,
+          ),
+        }
+        saveRun(next)
+        return next
+      }
+
+      if (item.kind === 'revive') {
+        if (!action.pokemonUid) return state
+        const target = state.party.find((p) => p.uid === action.pokemonUid)
+        if (!target || target.currentHp > 0) return state
+
+        const next: RunState = {
+          ...state,
+          inventory: inv,
+          party: state.party.map((p) =>
+            p.uid === action.pokemonUid ? revivePokemon(p) : p,
+          ),
+        }
+        saveRun(next)
+        return next
+      }
+
+      if (item.kind === 'battle-buff') {
+        const next: RunState = {
+          ...state,
+          inventory: inv,
+          pendingBattleBuffs: [...state.pendingBattleBuffs, createBattleBuff(action.itemId)],
+        }
+        saveRun(next)
+        return next
+      }
+
+      return state
+    }
+
+    case 'SELECT_NODE': {
+      const node = state.map.find((n) => n.id === action.nodeId)
+      if (!node || node.completed) return state
+
+      if (node.type === 'rest') {
+        const healed = state.party.map((p) => ({
+          ...p,
+          currentHp: p.maxHp,
+        }))
+        const updatedMap = markNodeComplete(state.map, node.id)
+        const next: RunState = {
+          ...state,
+          party: healed,
+          map: updatedMap,
+          currentNodeId: node.id,
+        }
+        saveRun(next)
+        return next
+      }
+
+      if (node.type === 'catch') {
+        const speciesId = pickCatchSpecies(state.seed, state.map.indexOf(node))
+        const level = pickCatchLevel(state.seed, state.map.indexOf(node), node.row)
+        const wild = await createPokemonInstance(speciesId, level)
+        const next: RunState = {
+          ...state,
+          screen: 'catch',
+          battleNodeId: node.id,
+          catchOffer: wild,
+        }
+        return next
+      }
+
+      if (node.type === 'wild' || node.type === 'trainer' || node.type === 'boss') {
+        const enemyParty: PokemonInstance[] = []
+        for (let i = 0; i < (node.enemySpeciesIds?.length ?? 0); i++) {
+          const id = node.enemySpeciesIds![i]
+          const lvl = node.enemyLevels?.[i] ?? 5
+          enemyParty.push(await createPokemonInstance(id, lvl))
+        }
+
+        const buffedParty = applyBattleBuffs(state.party, state.pendingBattleBuffs)
+        const battle = await initBattle(buffedParty, enemyParty, node.type)
+        const next: RunState = {
+          ...state,
+          screen: 'battle',
+          battleNodeId: node.id,
+          battle,
+          pendingBattleBuffs: [],
+        }
+        saveRun(next)
+        return next
+      }
+
+      return state
+    }
+
+    case 'BATTLE_UPDATED': {
+      const next = { ...state, battle: action.battle }
+      saveRun(next)
+      return next
+    }
+
+    case 'BATTLE_END': {
+      const updatedMap = markNodeComplete(state.map, action.postBattle.nodeId)
+      const node = state.map.find((n) => n.id === action.postBattle.nodeId)
+      const isBoss = node?.type === 'boss'
+      const avgLevel = node?.enemyLevels?.length
+        ? Math.floor(
+            node.enemyLevels.reduce((s, l) => s + l, 0) / node.enemyLevels.length,
+          )
+        : 5
+
+      const goldGained = battleGoldReward(avgLevel, node?.type ?? 'wild')
+
+      const postBattle: PostBattleResult = {
+        ...action.postBattle,
+        goldGained,
+      }
+
+      let next: RunState = {
+        ...state,
+        screen: isBoss ? 'victory' : 'post-battle',
+        party: action.party,
+        map: updatedMap,
+        currentNodeId: action.postBattle.nodeId,
+        battle: null,
+        postBattle,
+        gold: state.gold + goldGained,
+        badges: isBoss ? state.badges + 1 : state.badges,
+      }
+
+      if (isBoss) clearRun()
+      else saveRun(next)
+      return next
+    }
+
+    case 'RETURN_TO_MAP': {
+      const next: RunState = { ...state, screen: 'map', postBattle: null }
+      saveRun(next)
+      return next
+    }
+
+    case 'CATCH_POKEMON': {
+      const offer = state.catchOffer
+      const party = offer
+        ? applyCatchToParty(state.party, offer, action.accept, action.replaceUid)
+        : state.party
+
+      if (state.catchFromItem) {
+        const next: RunState = {
+          ...state,
+          screen: 'market',
+          party,
+          catchOffer: null,
+          catchFromItem: false,
+        }
+        saveRun(next)
+        return next
+      }
+
+      const nodeId = state.battleNodeId
+      if (!nodeId) return { ...state, screen: 'map', catchOffer: null }
+
+      const updatedMap = markNodeComplete(state.map, nodeId)
+      const next: RunState = {
+        ...state,
+        screen: 'map',
+        party,
+        map: updatedMap,
+        currentNodeId: nodeId,
+        battleNodeId: null,
+        catchOffer: null,
+      }
+      saveRun(next)
+      return next
+    }
+
+    case 'GAME_OVER':
+      clearRun()
+      return { ...initialState, screen: 'game-over', inventory: emptyInventory() }
+
+    case 'VICTORY':
+      return { ...initialState, screen: 'victory', inventory: emptyInventory() }
+
+    case 'RESET':
+      clearRun()
+      return { ...initialState, inventory: emptyInventory() }
+
+    default:
+      return state
+  }
+}
+
+function markNodeComplete(map: MapNode[], nodeId: string): MapNode[] {
+  return map.map((n) => (n.id === nodeId ? { ...n, completed: true } : n))
+}
