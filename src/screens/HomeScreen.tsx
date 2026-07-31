@@ -11,6 +11,11 @@ export function HomeScreen({ onNewRun, onContinue, loading }: HomeScreenProps) {
 
   return (
     <div className="screen home-screen">
+      <div className="home-deco" aria-hidden="true">
+        <span className="home-card home-card-1" />
+        <span className="home-card home-card-2" />
+        <span className="home-card home-card-3" />
+      </div>
       <div className="home-hero">
         <p className="eyebrow">Pokémon Roguelike</p>
         <h1>PokeCards</h1>

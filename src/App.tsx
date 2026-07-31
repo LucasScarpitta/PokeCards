@@ -7,13 +7,16 @@ import { PostBattleScreen } from './screens/PostBattleScreen'
 import { CatchScreen } from './screens/CatchScreen'
 import { EndScreen } from './screens/EndScreen'
 import { MarketScreen } from './screens/MarketScreen'
+import { ToastContainer } from './components/Toast'
+import { LoadingOverlay } from './components/LoadingOverlay'
 
 export default function App() {
   const [state, dispatch, loading] = useRunState()
 
   return (
     <div className="app">
-      {loading && <div className="global-loader">Loading...</div>}
+      <LoadingOverlay visible={loading} />
+      <ToastContainer />
 
       {state.screen === 'home' && (
         <HomeScreen
@@ -64,6 +67,7 @@ export default function App() {
         <PostBattleScreen
           result={state.postBattle}
           onContinue={() => dispatch({ type: 'RETURN_TO_MAP' })}
+          loading={loading}
         />
       )}
 
@@ -81,11 +85,21 @@ export default function App() {
       )}
 
       {state.screen === 'game-over' && (
-        <EndScreen variant="game-over" onRestart={() => dispatch({ type: 'RESET' })} />
+        <EndScreen
+          variant="game-over"
+          state={state}
+          onRestart={() => dispatch({ type: 'RESET' })}
+          loading={loading}
+        />
       )}
 
       {state.screen === 'victory' && (
-        <EndScreen variant="victory" onRestart={() => dispatch({ type: 'NEW_RUN' })} />
+        <EndScreen
+          variant="victory"
+          state={state}
+          onRestart={() => dispatch({ type: 'NEW_RUN' })}
+          loading={loading}
+        />
       )}
     </div>
   )

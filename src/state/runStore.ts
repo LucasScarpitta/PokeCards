@@ -17,7 +17,7 @@ import {
   revivePokemon,
   starterLevel,
 } from '../game/items'
-import { generateMap, pickCatchSpecies } from '../game/map'
+import { generateMap, getAvailableNodes, pickCatchSpecies } from '../game/map'
 import { pickTrainerTeam, pickWildSpecies } from '../game/rng'
 import { shouldBiasEarlyMatchup } from '../game/matchup'
 import { scaleCatchLevel, scaleEnemyLevel } from '../game/scaling'
@@ -30,6 +30,20 @@ import type {
   PostBattleResult,
   RunState,
 } from '../models/types'
+import type { ToastKind } from './toastStore'
+
+export type ActionResult = {
+  state: RunState
+  toast?: { kind: ToastKind; message: string }
+}
+
+function ok(state: RunState, toast?: ActionResult['toast']): ActionResult {
+  return { state, toast }
+}
+
+function fail(state: RunState, message: string, kind: ToastKind = 'error'): ActionResult {
+  return { state, toast: { kind, message } }
+}
 
 export type RunAction =
   | { type: 'INIT' }
@@ -93,27 +107,27 @@ async function rollPokeballCatch(state: RunState): Promise<PokemonInstance> {
 export async function handleRunAction(
   state: RunState,
   action: RunAction,
-): Promise<RunState> {
+): Promise<ActionResult> {
   state = normalizeRunState(state)
 
   switch (action.type) {
     case 'INIT':
-      return state
+      return ok(state)
 
     case 'NEW_RUN':
       clearRun()
       await prefetchTypes()
-      return {
+      return ok({
         ...initialState,
         screen: 'starter',
         seed: createSeed(),
         inventory: emptyInventory(),
-      }
+      })
 
     case 'CONTINUE_RUN': {
       const saved = loadRun()
-      if (saved) return normalizeRunState(saved)
-      return state
+      if (saved) return ok(normalizeRunState(saved))
+      return ok(state)
     }
 
     case 'SELECT_STARTER': {
@@ -131,19 +145,19 @@ export async function handleRunAction(
         pokeballsBought: 0,
       }
       saveRun(next)
-      return next
+      return ok(next)
     }
 
     case 'OPEN_MARKET': {
       const next: RunState = { ...state, screen: 'market' }
       saveRun(next)
-      return next
+      return ok(next)
     }
 
     case 'CLOSE_MARKET': {
       const next: RunState = { ...state, screen: 'map' }
       saveRun(next)
-      return next
+      return ok(next)
     }
 
     case 'BUY_ITEM': {
@@ -151,7 +165,7 @@ export async function handleRunAction(
 
       if (item.kind === 'pokeball') {
         const price = getItemPrice('pokeball', state.pokeballsBought)
-        if (state.gold < price) return state
+        if (state.gold < price) return fail(state, 'Not enough gold.')
 
         const wild = await rollPokeballCatch(state)
         const next: RunState = {
@@ -164,10 +178,10 @@ export async function handleRunAction(
           itemRollCounter: state.itemRollCounter + 1,
         }
         saveRun(next)
-        return next
+        return ok(next)
       }
 
-      if (state.gold < item.price) return state
+      if (state.gold < item.price) return fail(state, 'Not enough gold.')
 
       const next: RunState = {
         ...state,
@@ -175,15 +189,16 @@ export async function handleRunAction(
         inventory: addToInventory(state.inventory, action.itemId),
       }
       saveRun(next)
-      return next
+      return ok(next, { kind: 'success', message: `Purchased ${item.name}!` })
     }
 
     case 'USE_ITEM': {
       const item = getShopItem(action.itemId)
+      const cantUse = "Can't use that item right now."
 
       if (item.kind === 'pokeball') {
         const inv = removeFromInventory(state.inventory, action.itemId)
-        if (!inv) return state
+        if (!inv) return fail(state, cantUse)
 
         const wild = await rollPokeballCatch(state)
         const next: RunState = {
@@ -195,17 +210,17 @@ export async function handleRunAction(
           itemRollCounter: state.itemRollCounter + 1,
         }
         saveRun(next)
-        return next
+        return ok(next)
       }
 
       const inv = removeFromInventory(state.inventory, action.itemId)
-      if (!inv) return state
+      if (!inv) return fail(state, cantUse)
 
       if (item.kind === 'heal') {
-        if (!action.pokemonUid || !item.healAmount) return state
+        if (!action.pokemonUid || !item.healAmount) return fail(state, cantUse)
         const target = state.party.find((p) => p.uid === action.pokemonUid)
         if (!target || target.currentHp <= 0 || target.currentHp >= target.maxHp) {
-          return state
+          return fail(state, cantUse)
         }
 
         const next: RunState = {
@@ -216,13 +231,13 @@ export async function handleRunAction(
           ),
         }
         saveRun(next)
-        return next
+        return ok(next, { kind: 'success', message: `${target.name} was healed!` })
       }
 
       if (item.kind === 'revive') {
-        if (!action.pokemonUid) return state
+        if (!action.pokemonUid) return fail(state, cantUse)
         const target = state.party.find((p) => p.uid === action.pokemonUid)
-        if (!target || target.currentHp > 0) return state
+        if (!target || target.currentHp > 0) return fail(state, cantUse)
 
         const next: RunState = {
           ...state,
@@ -232,7 +247,7 @@ export async function handleRunAction(
           ),
         }
         saveRun(next)
-        return next
+        return ok(next, { kind: 'success', message: `${target.name} was revived!` })
       }
 
       if (item.kind === 'battle-buff') {
@@ -242,15 +257,22 @@ export async function handleRunAction(
           pendingBattleBuffs: [...state.pendingBattleBuffs, createBattleBuff(action.itemId)],
         }
         saveRun(next)
-        return next
+        return ok(next, { kind: 'success', message: `${item.name} activated for next battle!` })
       }
 
-      return state
+      return fail(state, cantUse)
     }
 
     case 'SELECT_NODE': {
       const node = state.map.find((n) => n.id === action.nodeId)
-      if (!node || node.completed) return state
+      if (!node || node.completed) {
+        return fail(state, "That route isn't available.")
+      }
+
+      const available = getAvailableNodes(state.map, state.currentNodeId)
+      if (!available.some((n) => n.id === action.nodeId)) {
+        return fail(state, "That route isn't available.")
+      }
 
       if (node.type === 'rest') {
         const healed = state.party.map((p) => ({
@@ -265,7 +287,7 @@ export async function handleRunAction(
           currentNodeId: node.id,
         }
         saveRun(next)
-        return next
+        return ok(next, { kind: 'success', message: 'Team fully healed!' })
       }
 
       if (node.type === 'catch') {
@@ -279,7 +301,7 @@ export async function handleRunAction(
           battleNodeId: node.id,
           catchOffer: wild,
         }
-        return next
+        return ok(next)
       }
 
       if (node.type === 'wild' || node.type === 'trainer' || node.type === 'boss') {
@@ -312,16 +334,16 @@ export async function handleRunAction(
           pendingBattleBuffs: [],
         }
         saveRun(next)
-        return next
+        return ok(next)
       }
 
-      return state
+      return fail(state, "That route isn't available.")
     }
 
     case 'BATTLE_UPDATED': {
       const next = { ...state, battle: action.battle }
       saveRun(next)
-      return next
+      return ok(next)
     }
 
     case 'BATTLE_END': {
@@ -349,13 +371,13 @@ export async function handleRunAction(
 
       if (isBoss) clearRun()
       else saveRun(next)
-      return next
+      return ok(next)
     }
 
     case 'RETURN_TO_MAP': {
       const next: RunState = { ...state, screen: 'map', postBattle: null }
       saveRun(next)
-      return next
+      return ok(next)
     }
 
     case 'CATCH_POKEMON': {
@@ -373,11 +395,11 @@ export async function handleRunAction(
           catchFromItem: false,
         }
         saveRun(next)
-        return next
+        return ok(next)
       }
 
       const nodeId = state.battleNodeId
-      if (!nodeId) return { ...state, screen: 'map', catchOffer: null }
+      if (!nodeId) return ok({ ...state, screen: 'map', catchOffer: null })
 
       const updatedMap = markNodeComplete(state.map, nodeId)
       const next: RunState = {
@@ -390,22 +412,22 @@ export async function handleRunAction(
         catchOffer: null,
       }
       saveRun(next)
-      return next
+      return ok(next)
     }
 
     case 'GAME_OVER':
       clearRun()
-      return { ...initialState, screen: 'game-over', inventory: emptyInventory() }
+      return ok({ ...initialState, screen: 'game-over', inventory: emptyInventory() })
 
     case 'VICTORY':
-      return { ...initialState, screen: 'victory', inventory: emptyInventory() }
+      return ok({ ...initialState, screen: 'victory', inventory: emptyInventory() })
 
     case 'RESET':
       clearRun()
-      return { ...initialState, inventory: emptyInventory() }
+      return ok({ ...initialState, inventory: emptyInventory() })
 
     default:
-      return state
+      return ok(state)
   }
 }
 

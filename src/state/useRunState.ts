@@ -5,9 +5,12 @@ import {
   type RunAction,
 } from './runStore'
 import { loadRun } from './persistence'
+import { showToast } from './toastStore'
 import type { RunState } from '../models/types'
 
 type Dispatch = (action: RunAction) => Promise<void>
+
+const LOADING_DEBOUNCE_MS = 150
 
 export function useRunState(): [RunState, Dispatch, boolean] {
   const [state, setState] = useState<RunState>(getInitialRunState)
@@ -21,11 +24,25 @@ export function useRunState(): [RunState, Dispatch, boolean] {
   }, [])
 
   const dispatch = useCallback(async (action: RunAction) => {
-    setLoading(true)
+    let cancelled = false
+    const timer = window.setTimeout(() => {
+      if (!cancelled) setLoading(true)
+    }, LOADING_DEBOUNCE_MS)
+
     try {
-      const next = await handleRunAction(stateRef.current, action)
-      setState(next)
+      const result = await handleRunAction(stateRef.current, action)
+      setState(result.state)
+      if (result.toast) {
+        showToast(result.toast)
+      }
+    } catch {
+      showToast({
+        kind: 'error',
+        message: 'Something went wrong. Try again.',
+      })
     } finally {
+      cancelled = true
+      window.clearTimeout(timer)
       setLoading(false)
     }
   }, [])

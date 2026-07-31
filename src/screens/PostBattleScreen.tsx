@@ -1,16 +1,27 @@
 import type { PostBattleResult } from '../models/types'
+import { TYPE_COLORS, typeLabel } from '../styles/typeColors'
 
 interface PostBattleScreenProps {
   result: PostBattleResult
   onContinue: () => void
+  loading?: boolean
 }
 
-export function PostBattleScreen({ result, onContinue }: PostBattleScreenProps) {
+export function PostBattleScreen({ result, onContinue, loading }: PostBattleScreenProps) {
   return (
     <div className="screen post-battle-screen">
       <h1>Victory!</h1>
-      <p className="xp-gained">+{result.xpGained} XP for your team</p>
-      <p className="gold-gained">+{result.goldGained} Gold</p>
+
+      <div className="reward-cards">
+        <div className="reward-card reward-card-1">
+          <span className="reward-label">XP</span>
+          <span className="reward-value">+{result.xpGained}</span>
+        </div>
+        <div className="reward-card reward-card-2">
+          <span className="reward-label">Gold</span>
+          <span className="reward-value">+{result.goldGained} G</span>
+        </div>
+      </div>
 
       {result.levelUps.length > 0 ? (
         <div className="level-ups">
@@ -23,11 +34,23 @@ export function PostBattleScreen({ result, onContinue }: PostBattleScreenProps) 
               {lu.newMoves.length > 0 && (
                 <div className="new-cards">
                   <span>New cards unlocked:</span>
-                  <ul>
+                  <div className="new-cards-row">
                     {lu.newMoves.map((m) => (
-                      <li key={m.moveId}>{m.name}</li>
+                      <span
+                        key={m.moveId}
+                        className="move-card mini-move-card"
+                        style={{ borderColor: TYPE_COLORS[m.type] }}
+                      >
+                        <span className="card-name">{m.name}</span>
+                        <span
+                          className="card-type"
+                          style={{ background: TYPE_COLORS[m.type] }}
+                        >
+                          {typeLabel(m.type)}
+                        </span>
+                      </span>
                     ))}
-                  </ul>
+                  </div>
                 </div>
               )}
             </div>
@@ -37,7 +60,7 @@ export function PostBattleScreen({ result, onContinue }: PostBattleScreenProps) 
         <p>No level ups this battle.</p>
       )}
 
-      <button type="button" className="btn primary" onClick={onContinue}>
+      <button type="button" className="btn primary" onClick={onContinue} disabled={loading}>
         Continue
       </button>
     </div>

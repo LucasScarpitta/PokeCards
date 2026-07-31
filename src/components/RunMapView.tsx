@@ -1,6 +1,8 @@
 import { formatBuffSummary } from '../game/items'
 import { getAvailableNodes } from '../game/map'
 import type { MapNode, RunState } from '../models/types'
+import { HpBar } from './PokemonSprite'
+import { GoldDisplay } from './GoldDisplay'
 
 interface RunMapViewProps {
   state: RunState
@@ -9,12 +11,26 @@ interface RunMapViewProps {
   loading?: boolean
 }
 
-const NODE_ICONS: Record<MapNode['type'], string> = {
-  wild: 'W',
-  trainer: 'T',
-  rest: 'R',
-  catch: 'C',
-  boss: 'B',
+const NODE_META: Record<MapNode['type'], { icon: string; title: string }> = {
+  wild: { icon: '🌿', title: 'Tall Grass' },
+  trainer: { icon: '⚔', title: 'Trainer' },
+  rest: { icon: '♥', title: 'Rest Stop' },
+  catch: { icon: '◎', title: 'Catch' },
+  boss: { icon: '★', title: 'Gym Leader' },
+}
+
+function nodeTitle(node: MapNode): string {
+  const meta = NODE_META[node.type]
+  const count = teamSize(node)
+  if (count !== null) {
+    return `${meta.title} · ${count} Pokémon`
+  }
+  return meta.title
+}
+
+function teamSize(node: MapNode): number | null {
+  if (node.type !== 'trainer' && node.type !== 'boss') return null
+  return node.enemySpeciesIds?.length ?? null
 }
 
 export function RunMapView({ state, onSelectNode, onOpenMarket, loading }: RunMapViewProps) {
@@ -22,18 +38,18 @@ export function RunMapView({ state, onSelectNode, onOpenMarket, loading }: RunMa
   const maxRow = Math.max(...state.map.map((n) => n.row))
 
   return (
-    <div className="run-map">
-      <header className="map-header">
+    <div className="run-map screen">
+      <header className="map-header map-header-sticky">
         <div className="map-header-top">
           <div>
             <h1>Route Map</h1>
             <p>After each step, pick any one of the three nodes in the next row.</p>
+            {state.badges > 0 && (
+              <p className="badge-display">Badges: {'★'.repeat(state.badges)}</p>
+            )}
           </div>
           <div className="map-hud">
-            <span className="gold-display compact">
-              <span className="gold-label">Gold</span>
-              <span className="gold-amount">{state.gold} G</span>
-            </span>
+            <GoldDisplay amount={state.gold} compact />
             <button type="button" className="btn primary" onClick={onOpenMarket} disabled={loading}>
               PokéMarket
             </button>
@@ -46,26 +62,38 @@ export function RunMapView({ state, onSelectNode, onOpenMarket, loading }: RunMa
         )}
       </header>
 
-      <div className="map-grid" style={{ gridTemplateRows: `repeat(${maxRow + 1}, 1fr)` }}>
-        {state.map.map((node) => {
-          const isAvailable = available.some((n) => n.id === node.id)
-          const isCurrent = state.currentNodeId === node.id
+      <p className="map-scroll-hint">Swipe to explore →</p>
 
-          return (
-            <button
-              key={node.id}
-              type="button"
-              className={`map-node type-${node.type} ${node.completed ? 'completed' : ''} ${isAvailable ? 'available' : ''} ${isCurrent ? 'current' : ''}`}
-              style={{ gridRow: node.row + 1, gridColumn: node.col + 1 }}
-              onClick={() => isAvailable && onSelectNode(node.id)}
-              disabled={!isAvailable || loading}
-            >
-              <span className="node-icon">{NODE_ICONS[node.type]}</span>
-              <span className="node-label">{node.label}</span>
-              {node.completed && <span className="node-done">✓</span>}
-            </button>
-          )
-        })}
+      <div className="map-scroll-wrap">
+        <div className="map-grid" style={{ gridTemplateRows: `repeat(${maxRow + 1}, 1fr)` }}>
+          {state.map.map((node) => {
+            const isAvailable = available.some((n) => n.id === node.id)
+            const isCurrent = state.currentNodeId === node.id
+            const meta = NODE_META[node.type]
+            const enemies = teamSize(node)
+
+            return (
+              <button
+                key={node.id}
+                type="button"
+                className={`map-node type-${node.type} ${node.completed ? 'completed' : ''} ${isAvailable ? 'available' : ''} ${isCurrent ? 'current' : ''}`}
+                style={{ gridRow: node.row + 1, gridColumn: node.col + 1 }}
+                onClick={() => isAvailable && onSelectNode(node.id)}
+                disabled={!isAvailable || loading}
+                title={nodeTitle(node)}
+              >
+                <span className="node-icon" aria-hidden="true">
+                  {meta.icon}
+                </span>
+                <span className="node-label">{node.label}</span>
+                {enemies !== null && (
+                  <span className="node-team-size">{enemies} Pokémon</span>
+                )}
+                {node.completed && <span className="node-done">✓</span>}
+              </button>
+            )
+          })}
+        </div>
       </div>
 
       <PartySummary party={state.party} />
@@ -82,7 +110,7 @@ function PartySummary({ party }: { party: RunState['party'] }) {
           <div key={mon.uid} className="party-summary-mon">
             <img src={mon.spriteUrl} alt={mon.name} />
             <span>{mon.name} Lv.{mon.level}</span>
-            <span className="mon-hp">{mon.currentHp}/{mon.maxHp} HP</span>
+            <HpBar current={mon.currentHp} max={mon.maxHp} />
             <span className="moves-count">{mon.unlockedMoveIds.length} cards</span>
           </div>
         ))}

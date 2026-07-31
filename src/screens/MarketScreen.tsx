@@ -1,6 +1,8 @@
 import { useState } from 'react'
 import { SHOP_CATALOG, formatBuffSummary, getItemPrice, getShopItem } from '../game/items'
 import type { ItemId, PokemonInstance, RunState } from '../models/types'
+import { GoldDisplay } from '../components/GoldDisplay'
+import { ScreenHeader } from '../components/ScreenHeader'
 
 interface MarketScreenProps {
   state: RunState
@@ -26,16 +28,11 @@ export function MarketScreen({
 
   return (
     <div className="screen market-screen">
-      <header className="market-header">
-        <div>
-          <h1>PokéMarket</h1>
-          <p>Buy supplies for your journey.</p>
-        </div>
-        <div className="gold-display">
-          <span className="gold-label">Gold</span>
-          <span className="gold-amount">{state.gold} G</span>
-        </div>
-      </header>
+      <ScreenHeader
+        title="PokéMarket"
+        subtitle="Buy supplies for your journey."
+        aside={<GoldDisplay amount={state.gold} />}
+      />
 
       {state.pendingBattleBuffs.length > 0 && (
         <div className="buff-banner">
@@ -50,13 +47,18 @@ export function MarketScreen({
             const price = getItemPrice(item.id, state.pokeballsBought)
             const canAfford = state.gold >= price
             return (
-              <div key={item.id} className="shop-item">
+              <div
+                key={item.id}
+                className={`shop-item ${canAfford ? '' : 'unaffordable'}`}
+              >
                 <div className="shop-item-info">
                   <strong>{item.name}</strong>
                   <p>{item.description}</p>
                   <span className="shop-price">{price} G</span>
                   {item.kind === 'pokeball' && state.pokeballsBought > 0 && (
-                    <span className="shop-note">Next: {getItemPrice('pokeball', state.pokeballsBought + 1)} G</span>
+                    <span className="shop-note">
+                      Next: {getItemPrice('pokeball', state.pokeballsBought + 1)} G
+                    </span>
                   )}
                 </div>
                 <button
@@ -98,22 +100,31 @@ export function MarketScreen({
             ))}
           </div>
         )}
-
-        {selectedShopItem && (selectedShopItem.kind === 'heal' || selectedShopItem.kind === 'revive') && (
-          <TargetPicker
-            itemId={selectedItem!}
-            party={state.party}
-            mode={selectedShopItem.kind}
-            onTarget={(pokemonUid) => {
-              onUse(selectedItem!, pokemonUid)
-              setSelectedItem(null)
-            }}
-            onCancel={() => setSelectedItem(null)}
-          />
-        )}
       </section>
 
-      <button type="button" className="btn secondary market-back" onClick={onClose}>
+      {selectedShopItem && (selectedShopItem.kind === 'heal' || selectedShopItem.kind === 'revive') && (
+        <div className="modal-backdrop" onClick={() => setSelectedItem(null)}>
+          <div className="modal-panel heal-picker" onClick={(e) => e.stopPropagation()}>
+            <TargetPicker
+              itemId={selectedItem!}
+              party={state.party}
+              mode={selectedShopItem.kind}
+              onTarget={(pokemonUid) => {
+                onUse(selectedItem!, pokemonUid)
+                setSelectedItem(null)
+              }}
+              onCancel={() => setSelectedItem(null)}
+            />
+          </div>
+        </div>
+      )}
+
+      <button
+        type="button"
+        className="btn secondary market-back"
+        onClick={onClose}
+        disabled={loading}
+      >
         Back to Map
       </button>
     </div>
@@ -175,7 +186,7 @@ function TargetPicker({
   const item = getShopItem(itemId)
 
   return (
-    <div className="heal-picker">
+    <>
       <h3>Use {item.name} on...</h3>
       <div className="heal-targets">
         {party.map((mon) => {
@@ -204,6 +215,6 @@ function TargetPicker({
       <button type="button" className="btn secondary" onClick={onCancel}>
         Cancel
       </button>
-    </div>
+    </>
   )
 }

@@ -4,6 +4,7 @@ import { applyXpToParty } from '../game/xp'
 import { CardHand } from '../components/CardHand'
 import { PartyTray } from '../components/PartyTray'
 import { PokemonSprite } from '../components/PokemonSprite'
+import { EnemyTeamBalls } from '../components/EnemyTeamBalls'
 import type { BattleState, PostBattleResult, RunState } from '../models/types'
 
 interface BattleScreenProps {
@@ -11,6 +12,13 @@ interface BattleScreenProps {
   onBattleUpdate: (battle: BattleState) => void
   onBattleEnd: (party: RunState['party'], postBattle: Omit<PostBattleResult, 'goldGained'>) => void
   onGameOver: () => void
+}
+
+function turnBanner(battle: BattleState): string {
+  if (battle.turn === 'ended') return 'Battle ended'
+  if (battle.mustSwitch) return 'Choose a Pokémon'
+  if (battle.turn === 'player') return 'Your turn'
+  return 'Enemy turn...'
 }
 
 export function BattleScreen({
@@ -29,7 +37,7 @@ export function BattleScreen({
   }, [battle])
 
   useEffect(() => {
-    logRef.current?.scrollTo(0, logRef.current.scrollHeight)
+    logRef.current?.scrollTo({ top: logRef.current.scrollHeight, behavior: 'smooth' })
   }, [localBattle.log])
 
   const finishIfDone = useCallback(
@@ -41,10 +49,7 @@ export function BattleScreen({
         return true
       }
 
-      const { party, levelUps } = await applyXpToParty(
-        next.playerParty,
-        next.xpReward,
-      )
+      const { party, levelUps } = await applyXpToParty(next.playerParty, next.xpReward)
 
       onBattleEnd(party, {
         xpGained: next.xpReward,
@@ -85,18 +90,35 @@ export function BattleScreen({
 
   const playerActive = localBattle.playerParty[localBattle.playerActiveIndex]
   const enemyActive = localBattle.enemyParty[localBattle.enemyActiveIndex]
+  const lastLogIndex = localBattle.log.length - 1
+  const showEnemyBalls =
+    localBattle.nodeType === 'trainer' || localBattle.nodeType === 'boss'
 
   return (
     <div className="screen battle-screen">
-      <div className="battle-arena">
+      <div className={`battle-arena ${busy ? 'is-busy' : ''}`}>
+        <div className="turn-banner" role="status">
+          {turnBanner(localBattle)}
+        </div>
+
         <div className="battle-field">
-          <PokemonSprite pokemon={enemyActive} side="enemy" />
+          <div className="battle-side battle-side-enemy">
+            {showEnemyBalls && (
+              <EnemyTeamBalls
+                party={localBattle.enemyParty}
+                activeIndex={localBattle.enemyActiveIndex}
+              />
+            )}
+            <PokemonSprite pokemon={enemyActive} side="enemy" />
+          </div>
           <PokemonSprite pokemon={playerActive} side="player" />
         </div>
 
-        <div className="battle-log" ref={logRef}>
+        <div className="battle-log" ref={logRef} aria-live="polite" aria-relevant="additions">
           {localBattle.log.map((line, i) => (
-            <p key={i}>{line}</p>
+            <p key={i} className={i === lastLogIndex ? 'log-latest' : undefined}>
+              {line}
+            </p>
           ))}
         </div>
 
@@ -114,6 +136,12 @@ export function BattleScreen({
             onPlay={handlePlay}
             disabled={busy || localBattle.turn !== 'player'}
           />
+        )}
+
+        {busy && (
+          <div className="battle-busy" aria-busy="true" aria-label="Resolving turn">
+            <div className="spinner" />
+          </div>
         )}
       </div>
     </div>

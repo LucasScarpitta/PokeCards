@@ -32,6 +32,7 @@ export function PartyTray({
               title={`${mon.name} Lv.${mon.level}`}
             >
               <img src={mon.spriteUrl} alt={mon.name} />
+              {fainted && <span className="fainted-mark" aria-hidden="true">✕</span>}
               <span className="party-hp">
                 {mon.currentHp}/{mon.maxHp}
               </span>
