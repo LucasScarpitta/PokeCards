@@ -66,10 +66,6 @@ export async function applyXpToParty(
   const updated: PokemonInstance[] = []
 
   for (const mon of party) {
-    if (mon.currentHp <= 0) {
-      updated.push(mon)
-      continue
-    }
     const result = await applyXp(mon, xpGain)
     updated.push(result.pokemon)
     if (result.levelUp) levelUps.push(result.levelUp)

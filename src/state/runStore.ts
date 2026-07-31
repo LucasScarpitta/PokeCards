@@ -1,7 +1,7 @@
 import { createPokemonInstance } from '../api/mappers'
 import { prefetchTypes } from '../api/pokeapi'
 import { initBattle } from '../game/battle'
-import { battleGoldReward } from '../game/formulas'
+import { applyCatchToParty } from '../game/catch'
 import {
   addToInventory,
   applyBattleBuffs,
@@ -17,9 +17,11 @@ import {
   revivePokemon,
   starterLevel,
 } from '../game/items'
-import { applyCatchToParty } from '../game/catch'
-import { generateMap, pickCatchLevel, pickCatchSpecies } from '../game/map'
-import { createSeed } from '../game/rng'
+import { generateMap, pickCatchSpecies } from '../game/map'
+import { pickTrainerTeam, pickWildSpecies } from '../game/rng'
+import { shouldBiasEarlyMatchup } from '../game/matchup'
+import { scaleCatchLevel, scaleEnemyLevel } from '../game/scaling'
+import { createSeed, seededRandom } from '../game/rng'
 import { clearRun, loadRun, saveRun } from './persistence'
 import type {
   ItemId,
@@ -116,7 +118,7 @@ export async function handleRunAction(
 
     case 'SELECT_STARTER': {
       const starter = await createPokemonInstance(action.speciesId, 5)
-      const map = generateMap(state.seed)
+      const map = generateMap(state.seed, starter.types)
       const next: RunState = {
         ...state,
         screen: 'map',
@@ -268,7 +270,8 @@ export async function handleRunAction(
 
       if (node.type === 'catch') {
         const speciesId = pickCatchSpecies(state.seed, state.map.indexOf(node))
-        const level = pickCatchLevel(state.seed, state.map.indexOf(node), node.row)
+        const rng = seededRandom(state.seed + state.map.indexOf(node) * 3571)
+        const level = scaleCatchLevel(state.party, rng)
         const wild = await createPokemonInstance(speciesId, level)
         const next: RunState = {
           ...state,
@@ -280,10 +283,22 @@ export async function handleRunAction(
       }
 
       if (node.type === 'wild' || node.type === 'trainer' || node.type === 'boss') {
+        const battleRng = seededRandom(state.seed + state.map.indexOf(node) * 5323)
+        const starterTypes = state.party[0]?.types ?? []
+
+        let speciesIds = node.enemySpeciesIds ?? []
+        if (shouldBiasEarlyMatchup(node.row) && starterTypes.length > 0) {
+          if (node.type === 'wild') {
+            speciesIds = [pickWildSpecies(node.row, battleRng, starterTypes)]
+          } else if (node.type === 'trainer') {
+            speciesIds = pickTrainerTeam(node.row, battleRng, starterTypes)
+          }
+        }
+
         const enemyParty: PokemonInstance[] = []
-        for (let i = 0; i < (node.enemySpeciesIds?.length ?? 0); i++) {
-          const id = node.enemySpeciesIds![i]
-          const lvl = node.enemyLevels?.[i] ?? 5
+        for (let i = 0; i < speciesIds.length; i++) {
+          const id = speciesIds[i]
+          const lvl = scaleEnemyLevel(state.party, node.type, i, battleRng)
           enemyParty.push(await createPokemonInstance(id, lvl))
         }
 
@@ -313,13 +328,7 @@ export async function handleRunAction(
       const updatedMap = markNodeComplete(state.map, action.postBattle.nodeId)
       const node = state.map.find((n) => n.id === action.postBattle.nodeId)
       const isBoss = node?.type === 'boss'
-      const avgLevel = node?.enemyLevels?.length
-        ? Math.floor(
-            node.enemyLevels.reduce((s, l) => s + l, 0) / node.enemyLevels.length,
-          )
-        : 5
-
-      const goldGained = battleGoldReward(avgLevel, node?.type ?? 'wild')
+      const goldGained = state.battle?.goldReward ?? 0
 
       const postBattle: PostBattleResult = {
         ...action.postBattle,

@@ -1,7 +1,7 @@
 import { buildTypeChart, getEffectiveness } from '../api/typeChart'
 import { mapMoveToCard } from '../api/mappers'
 import { buildDeck, drawHand, removeCardFromHand, returnCardToDeck, shuffle } from './cards'
-import { battleXpReward, calcDamage, rollHit } from './formulas'
+import { battleGoldReward, battleXpReward, calcDamage, rollHit } from './formulas'
 import type {
   BattleState,
   MoveCard,
@@ -54,6 +54,7 @@ export async function initBattle(
     log: [intro],
     nodeType,
     xpReward: battleXpReward(Math.floor(avgEnemyLevel), nodeType),
+    goldReward: battleGoldReward(Math.floor(avgEnemyLevel), nodeType),
     mustSwitch: false,
     pendingEnemyAction: false,
   }

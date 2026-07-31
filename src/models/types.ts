@@ -55,7 +55,6 @@ export interface MapNode {
   completed: boolean
   connections: string[]
   enemySpeciesIds?: number[]
-  enemyLevels?: number[]
   row: number
   col: number
 }
@@ -83,6 +82,7 @@ export interface BattleState {
   log: string[]
   nodeType: NodeType
   xpReward: number
+  goldReward: number
   mustSwitch: boolean
   pendingEnemyAction: boolean
 }

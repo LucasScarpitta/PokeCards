@@ -27,7 +27,7 @@ export function RunMapView({ state, onSelectNode, onOpenMarket, loading }: RunMa
         <div className="map-header-top">
           <div>
             <h1>Route Map</h1>
-            <p>Choose your next destination. Clear nodes to reach the Gym Leader.</p>
+            <p>After each step, pick any one of the three nodes in the next row.</p>
           </div>
           <div className="map-hud">
             <span className="gold-display compact">

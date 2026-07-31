@@ -74,9 +74,9 @@ export function battleGoldReward(enemyLevel: number, nodeType: string): number {
 }
 
 export function battleXpReward(enemyLevel: number, nodeType: string): number {
-  const base = enemyLevel * 16
+  const base = enemyLevel * 30
   if (nodeType === 'trainer') return Math.floor(base * 1.5)
-  if (nodeType === 'boss') return Math.floor(base * 2.5)
+  if (nodeType === 'boss') return Math.floor(base * 2)
   return base
 }
 
